@@ -48,3 +48,6 @@ Thumbs.db
 
 # Local test/load-test results
 **/k6-results/
+
+# Docker environment files
+**/*.env
