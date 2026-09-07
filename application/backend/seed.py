@@ -1,7 +1,6 @@
 from database import SessionLocal
 from models import Product
 
-
 PRODUCTS = [
     {
         "name": "Laptop",

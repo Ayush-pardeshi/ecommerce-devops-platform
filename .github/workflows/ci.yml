@@ -32,7 +32,10 @@ jobs:
         working-directory: application/backend
         run: |
           pytest -v
-
+      - name: Run code quality checks
+        run: |
+          pip install ruff
+          ruff check application/backend
       - name: Validate Python files
         working-directory: application/backend
         run: |

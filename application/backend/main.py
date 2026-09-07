@@ -1,14 +1,12 @@
-from fastapi import Depends, FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import select
-from sqlalchemy.orm import Session
-
 from auth import create_access_token, get_current_user_id
 from database import get_db
+from fastapi import Depends, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from models import CartItem, Order, OrderItem, Product, User
 from schemas import CartItemCreate, ProductCreate, UserCreate, UserLogin
 from security import hash_password, verify_password
-
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 app = FastAPI(title="E-Commerce Platform API")
 app.add_middleware(
