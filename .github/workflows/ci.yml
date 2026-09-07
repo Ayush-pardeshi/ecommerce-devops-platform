@@ -34,7 +34,7 @@ jobs:
           pytest -v
       - name: Run code quality checks
         run: |
-          pip install ruff
+          pip install ruff==0.16.6
           ruff check application/backend
       - name: Validate Python files
         working-directory: application/backend
