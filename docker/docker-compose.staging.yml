@@ -1,0 +1,17 @@
+services:
+  staging_frontend:
+    container_name: ecommerce-staging-frontend
+    image: ecommerce-frontend:staging
+
+    ports:
+      - "8081:8080"
+
+    networks:
+      - ecommerce-network
+
+    restart: "no"
+
+networks:
+  ecommerce-network:
+    external: true
+    name: docker_ecommerce-network
