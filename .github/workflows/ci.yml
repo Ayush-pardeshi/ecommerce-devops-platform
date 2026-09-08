@@ -216,7 +216,7 @@ jobs:
     runs-on: ubuntu-latest
 
     needs:
-      - docker
+      - deploy_staging
 
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
@@ -312,3 +312,108 @@ jobs:
           echo "Deployment completed successfully."
           echo "Commit deployed: ${{ github.sha }}"
           echo "EC2 instance: i-0efcf2b1b7919e7f4"
+
+  # =========================================
+  # DEPLOY TO STAGING
+  # =========================================
+  deploy_staging:
+    name: Deploy to Staging via SSM
+    runs-on: ubuntu-latest
+
+    needs:
+      - docker
+
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+
+      # -----------------------------------------
+      # AWS OIDC
+      # -----------------------------------------
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::121754142251:role/GitHubActionsECRRole
+          aws-region: eu-north-1
+
+      # -----------------------------------------
+      # Deploy staging through SSM
+      # -----------------------------------------
+      - name: Deploy staging application through SSM
+        run: |
+          COMMAND_ID=$(aws ssm send-command \
+            --region eu-north-1 \
+            --instance-ids i-0efcf2b1b7919e7f4 \
+            --document-name "AWS-RunShellScript" \
+            --parameters 'commands=["cd /home/ubuntu/ecommerce-devops-platform","./scripts/deploy-staging.sh ${{ github.sha }}"]' \
+            --query "Command.CommandId" \
+            --output text)
+
+          echo "SSM Staging Command ID: $COMMAND_ID"
+          echo "COMMAND_ID=$COMMAND_ID" >> "$GITHUB_ENV"
+
+      # -----------------------------------------
+      # Wait and retrieve SSM result
+      # -----------------------------------------
+      - name: Wait for staging deployment
+        run: |
+          echo "Waiting for staging deployment..."
+
+          for i in {1..30}; do
+
+            STATUS=$(aws ssm get-command-invocation \
+              --region eu-north-1 \
+              --command-id "$COMMAND_ID" \
+              --instance-id i-0efcf2b1b7919e7f4 \
+              --query "Status" \
+              --output text)
+
+            echo "Attempt $i/30 - SSM Status: $STATUS"
+
+            case "$STATUS" in
+              Success|Failed|Cancelled|TimedOut|Cancelling)
+                break
+                ;;
+              Pending|InProgress|Delayed)
+                sleep 5
+                ;;
+              *)
+                echo "Unknown SSM status: $STATUS"
+                sleep 5
+                ;;
+            esac
+
+          done
+
+          echo ""
+          echo "========================================"
+          echo "STAGING SSM COMMAND RESULT"
+          echo "========================================"
+
+          aws ssm get-command-invocation \
+            --region eu-north-1 \
+            --command-id "$COMMAND_ID" \
+            --instance-id i-0efcf2b1b7919e7f4 \
+            --query '{Status:Status,ResponseCode:ResponseCode,Output:StandardOutputContent,Error:StandardErrorContent}' \
+            --output json
+
+          echo "========================================"
+
+          if [ "$STATUS" != "Success" ]; then
+            echo "Staging deployment failed."
+            exit 1
+          fi
+
+      # -----------------------------------------
+      # Staging confirmation
+      # -----------------------------------------
+      - name: Verify staging deployment
+        run: |
+          echo "Staging deployment completed successfully."
+          echo "Commit deployed: ${{ github.sha }}"
+          echo "EC2 instance: i-0efcf2b1b7919e7f4"
+          echo "Staging port: 8081"
