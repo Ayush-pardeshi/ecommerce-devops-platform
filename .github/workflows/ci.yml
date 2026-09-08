@@ -12,6 +12,10 @@ permissions:
   contents: read
 
 jobs:
+
+  # =========================================
+  # BACKEND CI
+  # =========================================
   backend:
     name: Backend CI
     runs-on: ubuntu-latest
@@ -46,6 +50,10 @@ jobs:
         run: |
           python -m compileall .
 
+
+  # =========================================
+  # FRONTEND CI
+  # =========================================
   frontend:
     name: Frontend CI
     runs-on: ubuntu-latest
@@ -63,12 +71,18 @@ jobs:
 
       - name: Install dependencies
         working-directory: application/frontend
-        run: npm ci --ignore-scripts
+        run: |
+          npm ci --ignore-scripts
 
       - name: Build frontend
         working-directory: application/frontend
-        run: npm run build
+        run: |
+          npm run build
 
+
+  # =========================================
+  # DOCKER BUILD + SECURITY
+  # =========================================
   docker:
     name: Docker Build and Security Scan
     runs-on: ubuntu-latest
@@ -88,6 +102,9 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      # -----------------------------------------
+      # Build backend
+      # -----------------------------------------
       - name: Build backend image
         run: |
           docker build \
@@ -95,6 +112,9 @@ jobs:
             -t ecommerce-backend-ci:${{ github.sha }} \
             ./application/backend
 
+      # -----------------------------------------
+      # Build frontend
+      # -----------------------------------------
       - name: Build frontend image
         run: |
           docker build \
@@ -103,6 +123,9 @@ jobs:
             -t ecommerce-frontend-ci:${{ github.sha }} \
             ./application/frontend
 
+      # -----------------------------------------
+      # Trivy backend scan
+      # -----------------------------------------
       - name: Scan backend image
         uses: aquasecurity/trivy-action@master
         with:
@@ -113,6 +136,9 @@ jobs:
           severity: HIGH,CRITICAL
           skip-files: "**/pip/_vendor/bom.cdx.json"
 
+      # -----------------------------------------
+      # Trivy frontend scan
+      # -----------------------------------------
       - name: Scan frontend image
         uses: aquasecurity/trivy-action@master
         with:
@@ -122,6 +148,9 @@ jobs:
           ignore-unfixed: true
           severity: HIGH,CRITICAL
 
+      # -----------------------------------------
+      # AWS OIDC
+      # -----------------------------------------
       - name: Configure AWS credentials
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: aws-actions/configure-aws-credentials@v4
@@ -129,10 +158,16 @@ jobs:
           role-to-assume: arn:aws:iam::121754142251:role/GitHubActionsECRRole
           aws-region: eu-north-1
 
+      # -----------------------------------------
+      # ECR login
+      # -----------------------------------------
       - name: Login to Amazon ECR
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: aws-actions/amazon-ecr-login@v2
 
+      # -----------------------------------------
+      # Tag images
+      # -----------------------------------------
       - name: Tag images for ECR
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
@@ -148,6 +183,9 @@ jobs:
           docker tag ecommerce-frontend-ci:${{ github.sha }} \
             121754142251.dkr.ecr.eu-north-1.amazonaws.com/ecommerce-frontend:latest
 
+      # -----------------------------------------
+      # Push backend
+      # -----------------------------------------
       - name: Push backend image to ECR
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
@@ -157,6 +195,9 @@ jobs:
           docker push \
             121754142251.dkr.ecr.eu-north-1.amazonaws.com/ecommerce-backend:latest
 
+      # -----------------------------------------
+      # Push frontend
+      # -----------------------------------------
       - name: Push frontend image to ECR
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
@@ -166,6 +207,10 @@ jobs:
           docker push \
             121754142251.dkr.ecr.eu-north-1.amazonaws.com/ecommerce-frontend:latest
 
+
+  # =========================================
+  # DEPLOY TO EC2
+  # =========================================
   deploy:
     name: Deploy to EC2 via SSM
     runs-on: ubuntu-latest
@@ -180,12 +225,19 @@ jobs:
       id-token: write
 
     steps:
+
+      # -----------------------------------------
+      # AWS OIDC
+      # -----------------------------------------
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::121754142251:role/GitHubActionsECRRole
           aws-region: eu-north-1
 
+      # -----------------------------------------
+      # Send deployment command to EC2
+      # -----------------------------------------
       - name: Deploy application through SSM
         run: |
           COMMAND_ID=$(aws ssm send-command \
@@ -198,12 +250,65 @@ jobs:
 
           echo "SSM Command ID: $COMMAND_ID"
 
-          aws ssm wait command-executed \
+          echo "COMMAND_ID=$COMMAND_ID" >> "$GITHUB_ENV"
+
+      # -----------------------------------------
+      # Wait and retrieve SSM result
+      # -----------------------------------------
+      - name: Wait for SSM command
+        run: |
+          echo "Waiting for SSM command to complete..."
+
+          for i in {1..30}; do
+
+            STATUS=$(aws ssm get-command-invocation \
+              --region eu-north-1 \
+              --command-id "$COMMAND_ID" \
+              --instance-id i-0efcf2b1b7919e7f4 \
+              --query "Status" \
+              --output text)
+
+            echo "Attempt $i/30 - SSM Status: $STATUS"
+
+            case "$STATUS" in
+              Success|Failed|Cancelled|TimedOut|Cancelling)
+                break
+                ;;
+              Pending|InProgress|Delayed)
+                sleep 5
+                ;;
+              *)
+                echo "Unknown SSM status: $STATUS"
+                sleep 5
+                ;;
+            esac
+
+          done
+
+          echo ""
+          echo "========================================"
+          echo "SSM COMMAND RESULT"
+          echo "========================================"
+
+          aws ssm get-command-invocation \
             --region eu-north-1 \
             --command-id "$COMMAND_ID" \
-            --instance-id i-0efcf2b1b7919e7f4
+            --instance-id i-0efcf2b1b7919e7f4 \
+            --query '{Status:Status,ResponseCode:ResponseCode,Output:StandardOutputContent,Error:StandardErrorContent}' \
+            --output json
 
+          echo "========================================"
+
+          if [ "$STATUS" != "Success" ]; then
+            echo "SSM deployment failed."
+            exit 1
+          fi
+
+      # -----------------------------------------
+      # Deployment confirmation
+      # -----------------------------------------
       - name: Verify deployment
         run: |
           echo "Deployment completed successfully."
           echo "Commit deployed: ${{ github.sha }}"
+          echo "EC2 instance: i-0efcf2b1b7919e7f4"
