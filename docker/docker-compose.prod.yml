@@ -1,4 +1,4 @@
 services:
   frontend:
     ports: !override
-      - "80:80"
+      - "80:8080"
