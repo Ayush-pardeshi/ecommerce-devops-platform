@@ -165,3 +165,45 @@ jobs:
 
           docker push \
             121754142251.dkr.ecr.eu-north-1.amazonaws.com/ecommerce-frontend:latest
+
+  deploy:
+    name: Deploy to EC2 via SSM
+    runs-on: ubuntu-latest
+
+    needs:
+      - docker
+
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::121754142251:role/GitHubActionsECRRole
+          aws-region: eu-north-1
+
+      - name: Deploy application through SSM
+        run: |
+          COMMAND_ID=$(aws ssm send-command \
+            --region eu-north-1 \
+            --instance-ids i-0efcf2b1b7919e7f4 \
+            --document-name "AWS-RunShellScript" \
+            --parameters 'commands=["cd /home/ubuntu/ecommerce-devops-platform","./scripts/deploy.sh ${{ github.sha }}"]' \
+            --query "Command.CommandId" \
+            --output text)
+
+          echo "SSM Command ID: $COMMAND_ID"
+
+          aws ssm wait command-executed \
+            --region eu-north-1 \
+            --command-id "$COMMAND_ID" \
+            --instance-id i-0efcf2b1b7919e7f4
+
+      - name: Verify deployment
+        run: |
+          echo "Deployment completed successfully."
+          echo "Commit deployed: ${{ github.sha }}"
