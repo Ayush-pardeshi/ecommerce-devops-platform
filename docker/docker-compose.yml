@@ -23,6 +23,8 @@ services:
       retries: 5
 
   backend:
+    image: ecommerce-backend:latest
+
     build:
       context: ../application/backend
       dockerfile: Dockerfile
@@ -38,7 +40,6 @@ services:
       DATABASE_PORT: 5432
       DATABASE_NAME: ecommerce
       DATABASE_USER: ecommerce
-      
 
     depends_on:
       postgres:
@@ -48,6 +49,8 @@ services:
       - ecommerce-network
 
   frontend:
+    image: ecommerce-frontend:latest
+
     build:
       context: ../application/frontend
       dockerfile: Dockerfile
@@ -69,6 +72,7 @@ services:
 
 networks:
   ecommerce-network:
+    driver: bridge
 
 volumes:
   postgres_data:
