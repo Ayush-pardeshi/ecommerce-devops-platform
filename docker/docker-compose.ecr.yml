@@ -1,0 +1,8 @@
+services:
+  backend:
+    image: 121754142251.dkr.ecr.eu-north-1.amazonaws.com/ecommerce-backend:latest
+    build: !reset null
+
+  frontend:
+    image: 121754142251.dkr.ecr.eu-north-1.amazonaws.com/ecommerce-frontend:latest
+    build: !reset null
