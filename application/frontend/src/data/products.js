@@ -413,7 +413,7 @@ const products = [
       Lid: "Leak resistant",
     },
     variants: ["Black", "Silver", "Green"],
-  },,
+  },
 
   {
     id: 17,
