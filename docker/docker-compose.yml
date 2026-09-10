@@ -31,7 +31,15 @@ services:
 
     container_name: ecommerce-backend
     restart: unless-stopped
-
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: eu-north-1
+        awslogs-group: /ecommerce/backend
+        awslogs-stream: ecommerce-backend
+        awslogs-create-group: "false"
+        mode: non-blocking
+        max-buffer-size: 4m
     env_file:
       - ../application/backend/.env
 
@@ -59,9 +67,18 @@ services:
 
     container_name: ecommerce-frontend
     restart: unless-stopped
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: eu-north-1
+        awslogs-group: /ecommerce/frontend
+        awslogs-stream: ecommerce-frontend
+        awslogs-create-group: "false"
+        mode: non-blocking
+        max-buffer-size: 4m
 
     ports:
-      - "8080:80"
+      - "8080:8080"
 
     depends_on:
       backend:
