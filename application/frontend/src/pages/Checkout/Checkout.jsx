@@ -79,13 +79,17 @@ function Checkout() {
 
     const order = {
       id: `NOVA-${Date.now()}`,
-      customer: form,
-      payment,
-      items: cartItems,
-      subtotal,
-      delivery,
+      payment:
+        payment === "cod" || payment === "upi"
+          ? payment
+          : "card",
+      items: cartItems.map((item) => ({
+        id: item.id,
+        name: item.name,
+        quantity: item.quantity,
+        image: item.image,
+      })),
       total,
-      createdAt: new Date().toISOString(),
       status: "Confirmed",
     };
 
