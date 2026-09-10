@@ -68,3 +68,8 @@ trivy-*.json
 # Local IAM/debug artifacts
 github-actions-trust-policy.json
 application/frontend/coverage/
+
+# Portfolio configuration files
+!github-actions-trust-policy.json
+!zap-reports/
+!zap-reports/zap.yaml
