@@ -67,3 +67,4 @@ trivy-*.json
 
 # Local IAM/debug artifacts
 github-actions-trust-policy.json
+application/frontend/coverage/

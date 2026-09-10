@@ -105,6 +105,14 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Install frontend dependencies
+        working-directory: application/frontend
+        run: npm ci
+
+      - name: Run frontend tests with coverage
+        working-directory: application/frontend
+        run: npm run test:coverage
+
       - name: SonarQube Cloud scan
         uses: SonarSource/sonarqube-scan-action@v7
         env:
