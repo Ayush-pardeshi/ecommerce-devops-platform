@@ -48,3 +48,23 @@ Thumbs.db
 
 # Local test/load-test results
 **/k6-results/
+
+# Docker environment files
+**/*.env
+
+# Local backups
+**/*.bak
+**/*.backup
+**/*.broken-backup
+**/src.backup-*/
+
+# Database backups
+backups/
+
+# Security scan reports
+zap-reports/
+trivy-*.json
+
+# Local IAM/debug artifacts
+github-actions-trust-policy.json
+application/frontend/coverage/

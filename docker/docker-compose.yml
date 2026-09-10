@@ -4,10 +4,8 @@ services:
     container_name: ecommerce-postgres
     restart: unless-stopped
 
-    environment:
-      POSTGRES_DB: ecommerce
-      POSTGRES_USER: ecommerce
-      POSTGRES_PASSWORD: ecommerce_dev_password
+    env_file:
+      - ./postgres.env
 
     ports:
       - "127.0.0.1:5432:5432"
@@ -25,13 +23,23 @@ services:
       retries: 5
 
   backend:
+    image: ecommerce-backend:latest
+
     build:
       context: ../application/backend
       dockerfile: Dockerfile
 
     container_name: ecommerce-backend
     restart: unless-stopped
-
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: eu-north-1
+        awslogs-group: /ecommerce/backend
+        awslogs-stream: ecommerce-backend
+        awslogs-create-group: "false"
+        mode: non-blocking
+        max-buffer-size: 4m
     env_file:
       - ../application/backend/.env
 
@@ -40,8 +48,6 @@ services:
       DATABASE_PORT: 5432
       DATABASE_NAME: ecommerce
       DATABASE_USER: ecommerce
-      DATABASE_PASSWORD: ecommerce_dev_password
-      
 
     depends_on:
       postgres:
@@ -51,6 +57,8 @@ services:
       - ecommerce-network
 
   frontend:
+    image: ecommerce-frontend:latest
+
     build:
       context: ../application/frontend
       dockerfile: Dockerfile
@@ -59,9 +67,18 @@ services:
 
     container_name: ecommerce-frontend
     restart: unless-stopped
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: eu-north-1
+        awslogs-group: /ecommerce/frontend
+        awslogs-stream: ecommerce-frontend
+        awslogs-create-group: "false"
+        mode: non-blocking
+        max-buffer-size: 4m
 
     ports:
-      - "8080:80"
+      - "8080:8080"
 
     depends_on:
       backend:
@@ -72,6 +89,7 @@ services:
 
 networks:
   ecommerce-network:
+    driver: bridge
 
 volumes:
   postgres_data:

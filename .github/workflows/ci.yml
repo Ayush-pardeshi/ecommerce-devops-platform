@@ -1,0 +1,565 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: eu-north-1
+  AWS_ACCOUNT_ID: "121754142251"
+  AWS_ROLE_ARN: arn:aws:iam::121754142251:role/GitHubActionsECRRole
+  EC2_INSTANCE_ID: i-0efcf2b1b7919e7f4
+  BACKEND_ECR: 121754142251.dkr.ecr.eu-north-1.amazonaws.com/ecommerce-backend
+  FRONTEND_ECR: 121754142251.dkr.ecr.eu-north-1.amazonaws.com/ecommerce-frontend
+
+jobs:
+
+  # =========================================
+  # BACKEND CI
+  # =========================================
+  backend:
+    name: Backend CI
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install dependencies
+        working-directory: application/backend
+        run: |
+          python -m pip install pip==26.2.1
+          pip install --only-binary=:all: --require-hashes -r requirements.txt
+
+      - name: Run unit tests
+        working-directory: application/backend
+        run: |
+          pytest -v
+
+      - name: Run Ruff
+        run: |
+          pip install --only-binary=:all: ruff==0.16.6
+          ruff check application/backend
+
+      - name: Validate Python files
+        working-directory: application/backend
+        run: |
+          python -m compileall .
+
+
+  # =========================================
+  # FRONTEND CI
+  # =========================================
+  frontend:
+    name: Frontend CI
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: application/frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: application/frontend
+        run: |
+          npm ci --ignore-scripts
+
+      - name: Run frontend tests with coverage
+        working-directory: application/frontend
+        run: |
+          npm run test:coverage
+
+      - name: Build frontend
+        working-directory: application/frontend
+        run: |
+          npm run build
+
+      - name: Upload frontend coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage
+          path: application/frontend/coverage/lcov.info
+          if-no-files-found: error
+
+
+  # =========================================
+  # SONARQUBE CLOUD
+  # =========================================
+  sonarqube:
+    name: SonarQube Code Quality
+    runs-on: ubuntu-latest
+
+    needs:
+      - backend
+      - frontend
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download frontend coverage
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-coverage
+          path: application/frontend/coverage
+
+      - name: SonarQube Cloud scan
+        uses: SonarSource/sonarqube-scan-action@v7
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+
+  # =========================================
+  # DOCKER BUILD + TRIVY + ECR
+  # =========================================
+  docker:
+    name: Docker Build, Scan and Push
+    runs-on: ubuntu-latest
+
+    needs:
+      - backend
+      - frontend
+      - sonarqube
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # -----------------------------------------
+      # Build backend
+      # -----------------------------------------
+      - name: Build backend image
+        run: |
+          docker build \
+            --provenance=false \
+            -t ecommerce-backend-ci:${{ github.sha }} \
+            ./application/backend
+
+      # -----------------------------------------
+      # Build frontend
+      # -----------------------------------------
+      - name: Build frontend image
+        run: |
+          docker build \
+            --provenance=false \
+            --build-arg VITE_API_URL=/api \
+            -t ecommerce-frontend-ci:${{ github.sha }} \
+            ./application/frontend
+
+      # -----------------------------------------
+      # Trivy backend
+      # -----------------------------------------
+      - name: Scan backend image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ecommerce-backend-ci:${{ github.sha }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+          skip-files: "**/pip/_vendor/bom.cdx.json"
+
+      # -----------------------------------------
+      # Trivy frontend
+      # -----------------------------------------
+      - name: Scan frontend image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ecommerce-frontend-ci:${{ github.sha }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+
+      # -----------------------------------------
+      # AWS OIDC
+      # -----------------------------------------
+      - name: Configure AWS credentials
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # -----------------------------------------
+      # ECR login
+      # -----------------------------------------
+      - name: Login to Amazon ECR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # -----------------------------------------
+      # Tag images
+      # -----------------------------------------
+      - name: Tag images
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          docker tag \
+            ecommerce-backend-ci:${{ github.sha }} \
+            ${{ env.BACKEND_ECR }}:${{ github.sha }}
+
+          docker tag \
+            ecommerce-backend-ci:${{ github.sha }} \
+            ${{ env.BACKEND_ECR }}:latest
+
+          docker tag \
+            ecommerce-frontend-ci:${{ github.sha }} \
+            ${{ env.FRONTEND_ECR }}:${{ github.sha }}
+
+          docker tag \
+            ecommerce-frontend-ci:${{ github.sha }} \
+            ${{ env.FRONTEND_ECR }}:latest
+
+      # -----------------------------------------
+      # Push backend
+      # -----------------------------------------
+      - name: Push backend image
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          docker push ${{ env.BACKEND_ECR }}:${{ github.sha }}
+          docker push ${{ env.BACKEND_ECR }}:latest
+
+      # -----------------------------------------
+      # Push frontend
+      # -----------------------------------------
+      - name: Push frontend image
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          docker push ${{ env.FRONTEND_ECR }}:${{ github.sha }}
+          docker push ${{ env.FRONTEND_ECR }}:latest
+
+
+  # =========================================
+  # DEPLOY STAGING
+  # =========================================
+  deploy_staging:
+    name: Deploy Staging
+    runs-on: ubuntu-latest
+
+    needs:
+      - docker
+
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy staging through SSM
+        run: |
+          COMMAND_ID=$(aws ssm send-command \
+            --region "$AWS_REGION" \
+            --instance-ids "$EC2_INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --parameters 'commands=["cd /home/ubuntu/ecommerce-devops-platform","./scripts/deploy-staging.sh ${{ github.sha }}"]' \
+            --query "Command.CommandId" \
+            --output text)
+
+          echo "COMMAND_ID=$COMMAND_ID" >> "$GITHUB_ENV"
+          echo "Staging SSM Command ID: $COMMAND_ID"
+
+      - name: Wait for staging deployment
+        run: |
+          for i in {1..30}; do
+            STATUS=$(aws ssm get-command-invocation \
+              --region "$AWS_REGION" \
+              --command-id "$COMMAND_ID" \
+              --instance-id "$EC2_INSTANCE_ID" \
+              --query "Status" \
+              --output text)
+
+            echo "Attempt $i/30 - Status: $STATUS"
+
+            case "$STATUS" in
+              Success|Failed|Cancelled|TimedOut|Cancelling)
+                break
+                ;;
+              Pending|InProgress|Delayed)
+                sleep 5
+                ;;
+              *)
+                sleep 5
+                ;;
+            esac
+          done
+
+          aws ssm get-command-invocation \
+            --region "$AWS_REGION" \
+            --command-id "$COMMAND_ID" \
+            --instance-id "$EC2_INSTANCE_ID" \
+            --query '{Status:Status,ResponseCode:ResponseCode,Output:StandardOutputContent,Error:StandardErrorContent}' \
+            --output json
+
+          if [ "$STATUS" != "Success" ]; then
+            echo "Staging deployment failed."
+            exit 1
+          fi
+
+          echo "Staging deployment successful."
+
+
+  # =========================================
+  # ZAP DAST
+  # =========================================
+  zap:
+    name: ZAP DAST Security Scan
+    runs-on: ubuntu-latest
+
+    needs:
+      - deploy_staging
+
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Run ZAP baseline scan
+        run: |
+          COMMAND_ID=$(aws ssm send-command \
+            --region "$AWS_REGION" \
+            --instance-ids "$EC2_INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --parameters 'commands=["cd /home/ubuntu/ecommerce-devops-platform","mkdir -p zap-reports","sudo chown -R 1000:1000 zap-reports","docker run --rm --network docker_ecommerce-network -v /home/ubuntu/ecommerce-devops-platform/zap-reports:/zap/wrk/:rw ghcr.io/zaproxy/zaproxy:stable zap-baseline.py -t http://ecommerce-staging-frontend:8080 -r zap-report.html || test $? -eq 2"]' \
+            --query "Command.CommandId" \
+            --output text)
+
+          echo "COMMAND_ID=$COMMAND_ID" >> "$GITHUB_ENV"
+          echo "ZAP Command ID: $COMMAND_ID"
+
+      - name: Wait for ZAP scan
+        run: |
+          for i in {1..60}; do
+            STATUS=$(aws ssm get-command-invocation \
+              --region "$AWS_REGION" \
+              --command-id "$COMMAND_ID" \
+              --instance-id "$EC2_INSTANCE_ID" \
+              --query "Status" \
+              --output text)
+
+            echo "Attempt $i/60 - ZAP Status: $STATUS"
+
+            case "$STATUS" in
+              Success|Failed|Cancelled|TimedOut|Cancelling)
+                break
+                ;;
+              Pending|InProgress|Delayed)
+                sleep 5
+                ;;
+              *)
+                sleep 5
+                ;;
+            esac
+          done
+
+          aws ssm get-command-invocation \
+            --region "$AWS_REGION" \
+            --command-id "$COMMAND_ID" \
+            --instance-id "$EC2_INSTANCE_ID" \
+            --query '{Status:Status,ResponseCode:ResponseCode,Output:StandardOutputContent,Error:StandardErrorContent}' \
+            --output json
+
+          if [ "$STATUS" != "Success" ]; then
+            echo "ZAP security scan failed."
+            exit 1
+          fi
+
+          echo "ZAP DAST scan successful."
+
+
+  # =========================================
+  # PRODUCTION
+  # =========================================
+  deploy:
+    name: Deploy Production
+    runs-on: ubuntu-latest
+
+    needs:
+      - zap
+
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    environment:
+      name: production
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy production through SSM
+        run: |
+          COMMAND_ID=$(aws ssm send-command \
+            --region "$AWS_REGION" \
+            --instance-ids "$EC2_INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --parameters 'commands=["cd /home/ubuntu/ecommerce-devops-platform","./scripts/deploy.sh ${{ github.sha }}"]' \
+            --query "Command.CommandId" \
+            --output text)
+
+          echo "COMMAND_ID=$COMMAND_ID" >> "$GITHUB_ENV"
+          echo "Production SSM Command ID: $COMMAND_ID"
+
+      - name: Wait for production deployment
+        run: |
+          for i in {1..30}; do
+            STATUS=$(aws ssm get-command-invocation \
+              --region "$AWS_REGION" \
+              --command-id "$COMMAND_ID" \
+              --instance-id "$EC2_INSTANCE_ID" \
+              --query "Status" \
+              --output text)
+
+            echo "Attempt $i/30 - Production Status: $STATUS"
+
+            case "$STATUS" in
+              Success|Failed|Cancelled|TimedOut|Cancelling)
+                break
+                ;;
+              Pending|InProgress|Delayed)
+                sleep 5
+                ;;
+              *)
+                sleep 5
+                ;;
+            esac
+          done
+
+          aws ssm get-command-invocation \
+            --region "$AWS_REGION" \
+            --command-id "$COMMAND_ID" \
+            --instance-id "$EC2_INSTANCE_ID" \
+            --query '{Status:Status,ResponseCode:ResponseCode,Output:StandardOutputContent,Error:StandardErrorContent}' \
+            --output json
+
+          if [ "$STATUS" != "Success" ]; then
+            echo "Production deployment failed."
+            exit 1
+          fi
+
+          echo "Production deployment and smoke tests successful."
+
+
+  # =========================================
+  # DOCKER CLEANUP
+  # =========================================
+  cleanup:
+    name: Docker Cleanup
+    runs-on: ubuntu-latest
+
+    needs:
+      - deploy
+
+    if: ${{ always() && needs.deploy.result != 'skipped' }}
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Run Docker cleanup through SSM
+        run: |
+          COMMAND_ID=$(aws ssm send-command \
+            --region "$AWS_REGION" \
+            --instance-ids "$EC2_INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --parameters 'commands=["cd /home/ubuntu/ecommerce-devops-platform","./scripts/docker-cleanup.sh"]' \
+            --query "Command.CommandId" \
+            --output text)
+
+          echo "Cleanup SSM Command ID: $COMMAND_ID"
+
+          for i in {1..30}; do
+            STATUS=$(aws ssm get-command-invocation \
+              --region "$AWS_REGION" \
+              --command-id "$COMMAND_ID" \
+              --instance-id "$EC2_INSTANCE_ID" \
+              --query "Status" \
+              --output text)
+
+            echo "Attempt $i/30 - Cleanup Status: $STATUS"
+
+            case "$STATUS" in
+              Success|Failed|Cancelled|TimedOut|Cancelling)
+                break
+                ;;
+              Pending|InProgress|Delayed)
+                sleep 5
+                ;;
+              *)
+                sleep 5
+                ;;
+            esac
+          done
+
+          echo ""
+          echo "========================================"
+          echo "DOCKER CLEANUP RESULT"
+          echo "========================================"
+
+          aws ssm get-command-invocation \
+            --region "$AWS_REGION" \
+            --command-id "$COMMAND_ID" \
+            --instance-id "$EC2_INSTANCE_ID" \
+            --query '{Status:Status,ResponseCode:ResponseCode,Output:StandardOutputContent,Error:StandardErrorContent}' \
+            --output json
+
+          if [ "$STATUS" != "Success" ]; then
+            echo "Docker cleanup failed."
+            exit 1
+          fi
+
+          echo "Docker cleanup completed successfully."
