@@ -82,10 +82,22 @@ jobs:
         run: |
           npm ci --ignore-scripts
 
+      - name: Run frontend tests with coverage
+        working-directory: application/frontend
+        run: |
+          npm run test:coverage
+
       - name: Build frontend
         working-directory: application/frontend
         run: |
           npm run build
+
+      - name: Upload frontend coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage
+          path: application/frontend/coverage/lcov.info
+          if-no-files-found: error
 
 
   # =========================================
@@ -105,13 +117,11 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install frontend dependencies
-        working-directory: application/frontend
-        run: npm ci
-
-      - name: Run frontend tests with coverage
-        working-directory: application/frontend
-        run: npm run test:coverage
+      - name: Download frontend coverage
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-coverage
+          path: application/frontend/coverage
 
       - name: SonarQube Cloud scan
         uses: SonarSource/sonarqube-scan-action@v7
