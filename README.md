@@ -1938,10 +1938,6 @@ The repository includes the following evidence screenshots.
 
 ## Docker & Amazon ECR
 
-![Docker Containers Running](docs/screenshots/02-ecr-containers-running.png)
-
-![Production Website](docs/screenshots/04-ecr-production-website.png)
-
 ![ECR Repositories](docs/screenshots/03-ecr-repositories.png)
 
 ![Docker Production Containers](docs/screenshots/07-docker-production-containers.png)
