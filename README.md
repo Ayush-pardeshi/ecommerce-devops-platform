@@ -3103,7 +3103,6 @@ Health Checks
 CloudWatch Monitoring & Logs
     ↓
 Automatic Rollback if Deployment Fails
-```
 
 ### Problems This Project Solves
 
@@ -3266,7 +3265,6 @@ The project demonstrates the ability to think beyond individual tools and design
 **Development → Testing → Quality → Security → Containerization → Registry → Infrastructure → Staging → Approval → Production → Health Checks → Monitoring → Logging → Rollback → Backup & Recovery**
 
 This makes the project useful as a practical demonstration of **Cloud, DevOps, DevSecOps, Infrastructure as Code, CI/CD, release management, monitoring, troubleshooting, and operational recovery skills.**
-
 
 
 The project therefore represents a complete DevOps lifecycle rather than an isolated collection of tools.
